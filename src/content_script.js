@@ -10,6 +10,7 @@ const OVERLAY_RUNNING = "Rodando: aplicando cupons...";
 const OVERLAY_STOPPED = "Parado";
 const OVERLAY_WAITING = "Procurando cupons...";
 const OVERLAY_DONE = "Tudo pronto: não há mais páginas";
+const OVERLAY_NEXT = "Indo para a próxima página...";
 
 function isVisible(element) {
 	const style = getComputedStyle(element);
@@ -149,7 +150,15 @@ async function runAutomation(signal) {
 	try {
 		while (true) {
 			await waitForButtons(signal);
-			await clickApplyButtons(signal);
+
+			const buttons = getApplyButtons();
+
+			if (buttons.length === 0) setOverlay(OVERLAY_WAITING, "#6c757d");
+			else {
+				setOverlay(OVERLAY_RUNNING, "#0b6efd");
+
+				await clickApplyButtons(signal);
+			}
 
 			if (signal.aborted) break;
 
@@ -164,6 +173,8 @@ async function runAutomation(signal) {
 			}
 
 			const currentUrl = window.location.href;
+
+			setOverlay(OVERLAY_NEXT, "#0b6efd");
 
 			await delay(PAGE_DELAY_MS, signal);
 
