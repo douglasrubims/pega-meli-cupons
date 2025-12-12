@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Auto Apply Mercado Livre Coupons",
-  "description": "Apply all Mercado Livre coupons and paginate automatically with a Start/Stop toggle.",
+  "name": "Aplicar Cupons Meli",
+  "description": "Aplica cupons do Mercado Livre automaticamente e avança páginas com Start/Stop.",
   "version": "0.1.0",
   "action": {
     "default_popup": "src/popup.html",
