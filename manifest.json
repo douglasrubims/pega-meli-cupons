@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Apply Mercado Livre Coupons",
+  "description": "Apply all Mercado Livre coupons and paginate automatically with a Start/Stop toggle.",
+  "version": "0.1.0",
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "Auto-apply coupons"
+  },
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*.mercadolivre.com.br/cupons/*"
+  ],
+  "background": {
+    "service_worker": "src/service_worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.mercadolivre.com.br/cupons/*"
+      ],
+      "js": [
+        "src/content_script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
