@@ -82,8 +82,11 @@ function getNextPageButton() {
 	if (!btn) return null;
 
 	const className = btn.className || "";
+	const liDisabled = btn.closest("li")?.className || "";
 
-	const isDisabled = className.includes("andes-pagination__button--disabled");
+	const isDisabled =
+		className.includes("andes-pagination__button--disabled") ||
+		liDisabled.includes("andes-pagination__button--disabled");
 
 	return isDisabled ? null : btn;
 }
