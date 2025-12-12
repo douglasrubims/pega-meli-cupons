@@ -1,14 +1,27 @@
 const APPLY_LABEL = "Aplicar";
 const APPLY_DELAY_MS = 200;
 const APPLY_JITTER_MS = 0;
-const PAGE_DELAY_MS = 2000;
+const PAGE_DELAY_MS = 800;
 const WAIT_FOR_BUTTONS_MS = 4000;
 let automationState = { running: false, abortController: null };
+
+function isVisible(element) {
+	const style = getComputedStyle(element);
+	const rect = element.getBoundingClientRect();
+	return (
+		style.display !== "none" &&
+		style.visibility !== "hidden" &&
+		rect.width > 0 &&
+		rect.height > 0
+	);
+}
 
 function getApplyButtons() {
 	return Array.from(document.querySelectorAll("button")).filter(
 		(button) =>
-			button.innerText.trim().startsWith(APPLY_LABEL) && !button.disabled,
+			button.innerText.trim().startsWith(APPLY_LABEL) &&
+			!button.disabled &&
+			isVisible(button),
 	);
 }
 
@@ -42,35 +55,19 @@ async function waitForButtons(signal) {
 }
 
 async function clickApplyButtons(signal) {
-	const buttons = getApplyButtons();
-	if (!buttons.length) return;
+	while (true) {
+		const button = getApplyButtons()[0];
+		if (!button) break;
+		if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-	await Promise.all(
-		buttons.map((button, idx) => {
-			return new Promise((resolve, reject) => {
-				const jitter = Math.floor(Math.random() * APPLY_JITTER_MS);
-				const wait = idx * (APPLY_DELAY_MS + jitter);
-				const timeoutId = setTimeout(() => {
-					if (signal.aborted) {
-						reject(new DOMException("Aborted", "AbortError"));
-						return;
-					}
-					button.scrollIntoView({ block: "center" });
-					button.click();
-					resolve();
-				}, wait);
+		// Scroll then click sequentially, mirroring the original console script behavior.
+		button.scrollIntoView({ block: "center" });
+		await delay(30, signal); // small settle time after scroll
 
-				signal.addEventListener(
-					"abort",
-					() => {
-						clearTimeout(timeoutId);
-						reject(new DOMException("Aborted", "AbortError"));
-					},
-					{ once: true },
-				);
-			});
-		}),
-	);
+		button.click();
+		const jitter = Math.floor(Math.random() * APPLY_JITTER_MS);
+		await delay(APPLY_DELAY_MS + jitter, signal);
+	}
 }
 
 function waitForUrlChange(currentUrl, signal) {
