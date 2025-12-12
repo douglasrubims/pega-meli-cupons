@@ -2,11 +2,11 @@ const toggleButton = document.getElementById("toggle");
 const statusEl = document.getElementById("status");
 
 function setUiState(running) {
-	toggleButton.textContent = running ? "Stop" : "Start";
+	toggleButton.textContent = running ? "Parar" : "Iniciar";
 
 	statusEl.textContent = running
-		? "Running: will click Aplicar and paginate until the end."
-		: "Stopped: click Start on a coupons page.";
+		? "Aplicando cupons e avançando páginas..."
+		: "Clique em Iniciar em uma página de cupons.";
 }
 
 async function readRunningFlag() {
@@ -27,7 +27,7 @@ async function sendToggleCommand(nextState) {
 		setUiState(nextState);
 	} catch (err) {
 		statusEl.textContent =
-			"Could not reach the service worker. Is the extension reloaded?";
+			"Não foi possível comunicar com a extensão. Recarregue e tente novamente.";
 
 		console.error(err);
 	}

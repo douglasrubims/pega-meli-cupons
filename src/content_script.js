@@ -5,6 +5,12 @@ const PAGE_DELAY_MS = 800;
 const WAIT_FOR_BUTTONS_MS = 4000;
 let automationState = { running: false, abortController: null };
 
+const OVERLAY_ID = "__ml_coupons_status";
+const OVERLAY_RUNNING = "Rodando: aplicando cupons...";
+const OVERLAY_STOPPED = "Parado";
+const OVERLAY_WAITING = "Procurando cupons...";
+const OVERLAY_DONE = "Tudo pronto: não há mais páginas";
+
 function isVisible(element) {
 	const style = getComputedStyle(element);
 
@@ -16,6 +22,42 @@ function isVisible(element) {
 		rect.width > 0 &&
 		rect.height > 0
 	);
+}
+
+function ensureOverlay() {
+	let overlay = document.getElementById(OVERLAY_ID);
+
+	if (!overlay) {
+		overlay = document.createElement("div");
+
+		overlay.id = OVERLAY_ID;
+
+		Object.assign(overlay.style, {
+			position: "fixed",
+			top: "12px",
+			right: "12px",
+			zIndex: "999999",
+			background: "#0b6efd",
+			color: "#fff",
+			padding: "8px 12px",
+			borderRadius: "6px",
+			boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+			fontFamily: "Arial, sans-serif",
+			fontSize: "12px",
+		});
+
+		document.body.appendChild(overlay);
+	}
+
+	return overlay;
+}
+
+function setOverlay(text, color) {
+	const overlay = ensureOverlay();
+
+	overlay.textContent = text;
+
+	if (color) overlay.style.background = color;
 }
 
 function getApplyButtons() {
@@ -60,6 +102,8 @@ async function waitForButtons(signal) {
 	const deadline = Date.now() + WAIT_FOR_BUTTONS_MS;
 
 	while (Date.now() < deadline) {
+		setOverlay(OVERLAY_WAITING, "#6c757d");
+
 		if (getApplyButtons().length > 0) return;
 
 		await delay(200, signal);
@@ -112,7 +156,9 @@ async function runAutomation(signal) {
 			const next = getNextPageButton();
 
 			if (!next) {
-				console.log("No next page button found. Stopping automation.");
+				console.log('Nenhum botão "Seguinte" ativo. Automatização encerrada.');
+
+				setOverlay(OVERLAY_DONE, "#198754");
 
 				break;
 			}
@@ -144,6 +190,8 @@ function startAutomation() {
 
 	automationState = { running: true, abortController: controller };
 
+	setOverlay(OVERLAY_RUNNING, "#0b6efd");
+
 	runAutomation(controller.signal);
 }
 
@@ -153,6 +201,8 @@ function stopAutomation() {
 	automationState.abortController?.abort();
 
 	automationState = { running: false, abortController: null };
+
+	setOverlay(OVERLAY_STOPPED, "#6c757d");
 }
 
 function initFromStorage() {
