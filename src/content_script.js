@@ -61,6 +61,12 @@ function setOverlay(text, color) {
 	if (color) overlay.style.background = color;
 }
 
+async function setRunningFlag(value) {
+	try {
+		await chrome.storage.local.set({ running: value });
+	} catch {}
+}
+
 function getApplyButtons() {
 	return Array.from(document.querySelectorAll("button")).filter(
 		(button) =>
@@ -169,6 +175,10 @@ async function runAutomation(signal) {
 
 				setOverlay(OVERLAY_DONE, "#198754");
 
+				automationState = { running: false, abortController: null };
+
+				await setRunningFlag(false);
+
 				break;
 			}
 
@@ -191,6 +201,8 @@ async function runAutomation(signal) {
 	} finally {
 		if (automationState.abortController?.signal === signal)
 			automationState = { running: false, abortController: null };
+
+		await setRunningFlag(false);
 	}
 }
 
@@ -245,8 +257,13 @@ chrome.runtime.onMessage.addListener((message, _, sendResponse) => {
 chrome.storage.onChanged.addListener((changes, area) => {
 	if (area !== "local" || !changes.running) return;
 
-	if (changes.running.newValue) startAutomation();
-	else stopAutomation();
+	if (changes.running.newValue) {
+		startAutomation();
+
+		return;
+	}
+
+	if (automationState.running) stopAutomation();
 });
 
 initFromStorage();
