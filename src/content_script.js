@@ -2,7 +2,8 @@ const APPLY_LABEL = "Aplicar";
 const APPLY_DELAY_MS = 200;
 const APPLY_JITTER_MS = 0;
 const PAGE_DELAY_MS = 800;
-const WAIT_FOR_BUTTONS_MS = 4000;
+const WAIT_FOR_PAGE_MS = 6000;
+const API_TIMEOUT_MS = 5000;
 let automationState = { running: false, abortController: null };
 
 const OVERLAY_ID = "__ml_coupons_status";
@@ -14,7 +15,6 @@ const OVERLAY_NEXT = "Indo para a próxima página...";
 
 function isVisible(element) {
 	const style = getComputedStyle(element);
-
 	const rect = element.getBoundingClientRect();
 
 	return (
@@ -30,9 +30,7 @@ function ensureOverlay() {
 
 	if (!overlay) {
 		overlay = document.createElement("div");
-
 		overlay.id = OVERLAY_ID;
-
 		Object.assign(overlay.style, {
 			position: "fixed",
 			top: "12px",
@@ -46,7 +44,6 @@ function ensureOverlay() {
 			fontFamily: "Arial, sans-serif",
 			fontSize: "12px",
 		});
-
 		document.body.appendChild(overlay);
 	}
 
@@ -55,9 +52,7 @@ function ensureOverlay() {
 
 function setOverlay(text, color) {
 	const overlay = ensureOverlay();
-
 	overlay.textContent = text;
-
 	if (color) overlay.style.background = color;
 }
 
@@ -67,35 +62,158 @@ async function setRunningFlag(value) {
 	} catch {}
 }
 
+function getApiBasePath() {
+	return window.__CUSTOM_STATE__?.basePath || "/cupons/api";
+}
+
+function getPageCoupons() {
+	const coupons =
+		window._n?.ctx?.r?.appProps?.pageProps?.filteredCouponsData?.coupons;
+	return Array.isArray(coupons) ? coupons : [];
+}
+
+function getCsrfToken() {
+	return (
+		document.querySelector('meta[name="csrf-token"]')?.content ||
+		window._n?.ctx?.r?.csrfToken ||
+		""
+	);
+}
+
+function isCheckButton(button) {
+	const label = button.innerText.trim();
+	const aria = (button.getAttribute("aria-label") || "").trim();
+
+	return label.startsWith("Conferir") || aria.startsWith("Conferir");
+}
+
+function isCouponAppliedInDom(coupon) {
+	const titleText = coupon.title?.text;
+	if (!titleText) return false;
+
+	for (const card of document.querySelectorAll(".coupon-card")) {
+		const titleEl = card.querySelector(".title");
+		const cardTitle =
+			titleEl?.getAttribute("title") || titleEl?.textContent?.trim();
+
+		if (cardTitle !== titleText) continue;
+
+		if (card.querySelector(".andes-badge--green")) return true;
+
+		const button = card.querySelector("button");
+		if (button && isCheckButton(button)) return true;
+
+		return false;
+	}
+
+	return false;
+}
+
+function getInactiveCoupons() {
+	return getPageCoupons().filter((coupon) => {
+		if (coupon.status?.id !== "INACTIVE") return false;
+		if (coupon.action?.type !== "button") return false;
+		if (!(coupon.code || coupon.inputCode)) return false;
+		if (isCouponAppliedInDom(coupon)) return false;
+
+		return true;
+	});
+}
+
+function buildActivateUrl(campaignId, code) {
+	const params = new URLSearchParams({
+		coupon_activate_code: code,
+		campaign_id: String(campaignId),
+		origin: "filter",
+	});
+
+	const scope = window.__CUSTOM_STATE__?.scopeParam;
+	const middle = window.__CUSTOM_STATE__?.middleVersionParam;
+	if (scope) params.set("scope", scope);
+	if (middle) params.set("middle", middle);
+
+	const hasV2 =
+		window._n?.ctx?.r?.appProps?.pageProps?.hasCouponsLandingRedesignV2;
+	if (hasV2) params.set("wallet_experiment_on", "true");
+
+	return `${getApiBasePath()}/activate?${params.toString()}`;
+}
+
+async function activateCouponViaApi(coupon, signal) {
+	const code = coupon.code || coupon.inputCode;
+	const url = buildActivateUrl(coupon.campaignId, code);
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+	if (signal) {
+		signal.addEventListener("abort", () => controller.abort(), { once: true });
+	}
+
+	try {
+		const csrfToken = getCsrfToken();
+		const headers = { "Content-Type": "application/json" };
+
+		if (csrfToken) headers["x-csrf-token"] = csrfToken;
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers,
+			body: "{}",
+			credentials: "include",
+			signal: controller.signal,
+		});
+
+		return response.ok;
+	} catch {
+		return false;
+	} finally {
+		clearTimeout(timeoutId);
+	}
+}
+
+function isApplyButton(button) {
+	const label = button.innerText.trim();
+	const aria = (button.getAttribute("aria-label") || "").trim();
+
+	if (label.startsWith("Conferir") || aria.startsWith("Conferir")) return false;
+
+	return label.startsWith(APPLY_LABEL) || aria.startsWith(APPLY_LABEL);
+}
+
 function getApplyButtons() {
-	return Array.from(document.querySelectorAll("button")).filter(
-		(button) =>
-			button.innerText.trim().startsWith(APPLY_LABEL) &&
-			!button.disabled &&
-			isVisible(button),
+	return Array.from(document.querySelectorAll(".coupon-card button")).filter(
+		(button) => isApplyButton(button) && !button.disabled && isVisible(button),
 	);
 }
 
 function getNextPageButton() {
-	const btn = document.querySelector('a[title="Seguinte"]');
+	const selectors = [
+		'a[title="Próximo"]',
+		'a[title="Seguinte"]',
+		'a[data-andes-pagination-control="next"]',
+	];
 
-	if (!btn) return null;
+	for (const selector of selectors) {
+		const btn = document.querySelector(selector);
+		if (!btn) continue;
 
-	const className = btn.className || "";
-	const liDisabled = btn.closest("li")?.className || "";
+		const li = btn.closest("li");
+		const isDisabled =
+			btn.className.includes("andes-pagination__button--disabled") ||
+			(li?.className || "").includes("andes-pagination__button--disabled") ||
+			btn.getAttribute("aria-disabled") === "true";
 
-	const isDisabled =
-		className.includes("andes-pagination__button--disabled") ||
-		liDisabled.includes("andes-pagination__button--disabled");
+		if (!isDisabled) return btn;
+	}
 
-	return isDisabled ? null : btn;
+	return null;
 }
 
 function delay(ms, signal) {
 	return new Promise((resolve, reject) => {
 		const timeoutId = setTimeout(resolve, ms);
 
-		if (signal)
+		if (signal) {
 			signal.addEventListener(
 				"abort",
 				() => {
@@ -104,107 +222,138 @@ function delay(ms, signal) {
 				},
 				{ once: true },
 			);
+		}
 	});
 }
 
-async function waitForButtons(signal) {
-	// Wait until at least one Aplicar button is present (or timeout).
-	const deadline = Date.now() + WAIT_FOR_BUTTONS_MS;
+async function waitForPageReady(signal) {
+	const deadline = Date.now() + WAIT_FOR_PAGE_MS;
 
 	while (Date.now() < deadline) {
 		setOverlay(OVERLAY_WAITING, "#6c757d");
 
-		if (getApplyButtons().length > 0) return;
+		if (
+			getInactiveCoupons().length > 0 ||
+			getApplyButtons().length > 0 ||
+			document.querySelectorAll(".coupon-card").length > 0
+		) {
+			return;
+		}
 
 		await delay(200, signal);
+	}
+}
+
+async function applyCouponsViaApi(signal) {
+	const coupons = getInactiveCoupons();
+
+	for (const coupon of coupons) {
+		if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+		setOverlay(OVERLAY_RUNNING, "#0b6efd");
+
+		const ok = await activateCouponViaApi(coupon, signal);
+		if (!ok) {
+			const button = getApplyButtons().find((btn) => {
+				const aria = btn.getAttribute("aria-label") || "";
+				return aria.includes(coupon.title?.text || "");
+			});
+
+			if (button) {
+				button.scrollIntoView({ block: "center" });
+				await delay(30, signal);
+				button.click();
+			}
+		}
+
+		const jitter = Math.floor(Math.random() * APPLY_JITTER_MS);
+		await delay(APPLY_DELAY_MS + jitter, signal);
 	}
 }
 
 async function clickApplyButtons(signal) {
 	while (true) {
 		const button = getApplyButtons()[0];
-
 		if (!button) break;
 
 		if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-		// Scroll then click sequentially, mirroring the original console script behavior.
 		button.scrollIntoView({ block: "center" });
-
-		await delay(30, signal); // small settle time after scroll
-
+		await delay(30, signal);
 		button.click();
 
 		const jitter = Math.floor(Math.random() * APPLY_JITTER_MS);
-
 		await delay(APPLY_DELAY_MS + jitter, signal);
 	}
 }
 
-function waitForUrlChange(currentUrl, signal) {
-	return new Promise((resolve) => {
-		const check = () => {
-			if (signal.aborted) return resolve();
+function pageSnapshot() {
+	return {
+		url: window.location.href,
+		couponCount: document.querySelectorAll(".coupon-card").length,
+		inactiveIds: getInactiveCoupons()
+			.map((c) => c.campaignId)
+			.join(","),
+	};
+}
 
-			if (window.location.href !== currentUrl) return resolve();
+async function waitForPageChange(before, signal) {
+	const deadline = Date.now() + 12000;
 
-			requestAnimationFrame(check);
-		};
+	while (Date.now() < deadline) {
+		if (signal.aborted) return;
 
-		check();
-	});
+		const after = pageSnapshot();
+		if (
+			after.url !== before.url ||
+			after.couponCount !== before.couponCount ||
+			after.inactiveIds !== before.inactiveIds
+		) {
+			return;
+		}
+
+		await delay(200, signal);
+	}
 }
 
 async function runAutomation(signal) {
 	try {
 		while (true) {
-			await waitForButtons(signal);
+			await waitForPageReady(signal);
 
 			const buttons = getApplyButtons();
+			const inactive = getInactiveCoupons();
 
-			if (buttons.length === 0) setOverlay(OVERLAY_WAITING, "#6c757d");
-			else {
+			if (buttons.length > 0) {
 				setOverlay(OVERLAY_RUNNING, "#0b6efd");
-
 				await clickApplyButtons(signal);
+			} else if (inactive.length > 0) {
+				setOverlay(OVERLAY_RUNNING, "#0b6efd");
+				await applyCouponsViaApi(signal);
 			}
 
 			if (signal.aborted) break;
 
 			const next = getNextPageButton();
-
 			if (!next) {
-				console.log('Nenhum botão "Seguinte" ativo. Automatização encerrada.');
-
 				setOverlay(OVERLAY_DONE, "#198754");
-
 				automationState = { running: false, abortController: null };
-
 				await setRunningFlag(false);
-
 				break;
 			}
 
-			const currentUrl = window.location.href;
-
+			const before = pageSnapshot();
 			setOverlay(OVERLAY_NEXT, "#0b6efd");
-
 			await delay(PAGE_DELAY_MS, signal);
-
 			next.click();
-
-			await Promise.race([
-				waitForUrlChange(currentUrl, signal),
-
-				delay(12000, signal),
-			]);
+			await waitForPageChange(before, signal);
 		}
 	} catch (err) {
 		if (err.name !== "AbortError") console.error("Automation error:", err);
 	} finally {
-		if (automationState.abortController?.signal === signal)
+		if (automationState.abortController?.signal === signal) {
 			automationState = { running: false, abortController: null };
-
+		}
 		await setRunningFlag(false);
 	}
 }
@@ -213,11 +362,8 @@ function startAutomation() {
 	if (automationState.running) return;
 
 	const controller = new AbortController();
-
 	automationState = { running: true, abortController: controller };
-
 	setOverlay(OVERLAY_RUNNING, "#0b6efd");
-
 	runAutomation(controller.signal);
 }
 
@@ -225,32 +371,31 @@ function stopAutomation() {
 	if (!automationState.running) return;
 
 	automationState.abortController?.abort();
-
 	automationState = { running: false, abortController: null };
-
 	setOverlay(OVERLAY_STOPPED, "#6c757d");
 }
 
 function initFromStorage() {
 	chrome.storage.local.get({ running: false }, ({ running }) => {
-		if (running) startAutomation();
+		if (running) {
+			startAutomation();
+			return;
+		}
+
+		setOverlay(OVERLAY_STOPPED, "#6c757d");
 	});
 }
 
 chrome.runtime.onMessage.addListener((message, _, sendResponse) => {
 	if (message?.type === "automation-start") {
 		startAutomation();
-
 		sendResponse?.({ ok: true });
-
 		return true;
 	}
 
 	if (message?.type === "automation-stop") {
 		stopAutomation();
-
 		sendResponse?.({ ok: true });
-
 		return true;
 	}
 
@@ -262,7 +407,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 	if (changes.running.newValue) {
 		startAutomation();
-
 		return;
 	}
 
